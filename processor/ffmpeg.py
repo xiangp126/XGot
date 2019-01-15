@@ -42,7 +42,7 @@ def has_ffmpeg_installed():
     return FFMPEG is not None
 
 def ffmpeg_concat_ts_to_mp4(files, output='output.mp4'):
-    print('Merging video parts... ', end="", flush=True)
+    print('\nMerging video parts... ', end="", flush=True)
     params = [FFMPEG] + LOGLEVEL + ['-isync', '-y', '-i']
     params.append('concat:')
     for file in files:

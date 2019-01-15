@@ -11,7 +11,9 @@ import logging
 import argparse
 from importlib import import_module
 from urllib import request, parse, error
+from multiprocessing import Process
 
+remove_slice = False
 dry_run = False
 json_output = False
 force = False
@@ -333,14 +335,16 @@ def download_urls(urls, title, ext, total_size, output_dir='.', refer=None,
 
     bar = PiecesProgressBar(total_size, len(urls))
 
-    if len(urls) == 1:
+    num_process = 20
+    process_list = []
+    item_urls = len(urls)
+
+    if item_urls == 1:
         url = urls[0]
         print('Downloading %s ...' % tr(output_filename))
         bar.update()
-        url_save(
-            url, output_filepath, bar, refer=refer, faker=faker,
-            headers=headers, **kwargs
-        )
+        url_save(url, output_filepath, bar, refer=refer, faker=faker,
+                 headers=headers, **kwargs)
         bar.done()
     else:
         parts = []
@@ -351,9 +355,18 @@ def download_urls(urls, title, ext, total_size, output_dir='.', refer=None,
             filepath = os.path.join(output_dir, filename)
             parts.append(filepath)
             bar.update_piece(i + 1)
-            url_save(url, filepath, bar, refer=refer, is_part=True, faker=faker,
-                     headers=headers, **kwargs)
+
+            new_p = Process(target = url_save, args = (url, filepath, bar, refer, True, faker, headers, None))
+            process_list.append(new_p)
+
+            #  url_save(url, filepath, bar, refer=refer, is_part=True, faker=faker,
+                     #  headers=headers, **kwargs)
         bar.done()
+
+        for p in process_list:
+            p.start()
+        for p in process_list:
+            p.join()
 
         if not merge:
             print()
@@ -369,13 +382,13 @@ def download_urls(urls, title, ext, total_size, output_dir='.', refer=None,
                 else:
                     from processor.join_ts import concat_ts
                     concat_ts(parts, output_filepath)
-                print('Merged into %s' % output_filename)
+                print('\nMerged into %s' % output_filename)
             except:
                 raise
             else:
                 for part in parts:
-                    os.remove(part)
-
+                    if remove_slice:
+                        os.remove(part)
         else:
             print("Can't merge %s files" % ext)
 

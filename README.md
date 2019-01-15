@@ -1,6 +1,6 @@
 ### XGot
 
-[XGot](https://github.com/xiangp126/xgot) aims to download videos from [乐FUN影视] (http://www.lefuntv.us/), can be a complement for [You-Get](https://github.com/soimort/you-get)
+[XGot](https://github.com/xiangp126/xgot) aims to download videos from [乐FUN影视](http://www.lefuntv.us/), can be a complement for [You-Get](https://github.com/soimort/you-get)
 
 ### Usage
 #### clone repo
