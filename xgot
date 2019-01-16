@@ -3,7 +3,10 @@ from urllib import request, parse, error
 from time import sleep
 import math
 import socket
+import logging
 import os
+import re
+import json
 from common import *
 from multiprocessing import Process
 
@@ -12,7 +15,8 @@ title = "hello"
 output_dir = "./video"
 suffix = "ts"
 need_merge = True
-m3u8_url = r"https://youku163.zuida-bofang.com/20181225/22948_a81f138c/800k/hls/index.m3u8"
+#  m3u8_url = r"https://youku163.zuida-bofang.com/20181225/22948_a81f138c/800k/hls/index.m3u8"
+#  url = "http://www.lefuntv.us/index.php/vod/play/id/214/sid/1/nid/1.html"
 headers = {'user-agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36'}
 debug = False
 
@@ -49,6 +53,30 @@ def pre_download(urls, title, suffix, output_dir, merge):
     output_filepath = os.path.join(output_dir, output_filename)
 
 def start_work(**kwargs):
+    title_patt = r'<title>(.+?)</title>'
+    m3u8_patt = r'(https?://[^;"\'\\]+' + '\.m3u8?' + r'[^;"\'\\]*)'
+
+    page = get_content(url, headers)
+    hit = re.findall(m3u8_patt, page)
+    if hit is None:
+        print("Could not find first m3u8 url")
+        return
+    first_m3u8_url = hit[0]
+    hit = re.search(title_patt, page)
+    if hit != None:
+        global title
+        title = hit.group(1)
+    logging.debug("haha")
+    print(title)
+
+    m3u8_url_list = real_m3u8_extractor(first_m3u8_url, headers)
+    m3u8_url = m3u8_url_list[0]
+    if m3u8_url is None:
+        print("Could not find first m3u8 url")
+        return
+    print(m3u8_url)
+
+    # get ts real urls from m3u8
     urls = general_m3u8_extractor(m3u8_url, headers)
     item_urls = len(urls)
     num_process = 10
@@ -77,4 +105,10 @@ def start_work(**kwargs):
     tackle_slice_of_ts(parts, output_filepath, suffix, need_merge)
 
 if __name__ == '__main__':
+    _srcdir = '%s/src/' %os.path.dirname(os.path.realpath(__file__))
+    _filepath = os.path.dirname(sys.argv[0])
+    sys.path.insert(1, os.path.join(_filepath, _srcdir))
+
+    global url
+    url = sys.argv[1]
     start_work()

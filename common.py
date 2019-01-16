@@ -135,8 +135,8 @@ def get_content(url, headers={}, decoded=True):
 
     return data
 
-def general_m3u8_extractor(url, headers={}):
-    m3u8_list = get_content(url, headers=headers).split('\n')
+def general_m3u8_extractor(url, headers = {}):
+    m3u8_list = get_content(url, headers = headers).split('\n')
     urls = []
     for line in m3u8_list:
         line = line.strip()
@@ -147,6 +147,20 @@ def general_m3u8_extractor(url, headers={}):
                 seg_url = parse.urljoin(url, line)
                 urls.append(seg_url)
     return urls
+
+def real_m3u8_extractor(url, headers = {}):
+    m3u8_list = get_content(url, headers = headers).split('\n')
+    urls = []
+    for line in m3u8_list:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            if line.startswith('http'):
+                urls.append(line)
+            else:
+                seg_url = parse.urljoin(url, line)
+                urls.append(seg_url)
+            return urls
+    return None
 
 def url_size(url, faker=False, headers={}):
     if faker:
