@@ -4,29 +4,77 @@ from time import sleep
 import math
 import socket
 import os
-from common import general_m3u8_extractor, download_urls
+from common import *
+from multiprocessing import Process
 
 # need update
 title = "hello"
 output_dir = "./video"
-
 suffix = "ts"
 need_merge = True
 m3u8_url = r"https://youku163.zuida-bofang.com/20181225/22948_a81f138c/800k/hls/index.m3u8"
 headers = {'user-agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36'}
 debug = False
 
+parts = []
+output_filepath = ""
+
 def print_url(urls):
     for url in urls:
         print(url)
 
+def chunks(l, n_slice):
+    ret = []
+    tot_len = len(l)
+    loop = math.ceil(tot_len / n_slice)
+    residue = tot_len - loop * n_slice
+    for i in range(0, loop):
+        start = i * n_slice
+        end_pass = start + n_slice
+        if i + 1 == loop:
+            end_pass = tot_len
+        ret.append(l[start:end_pass])
+    return ret
+
+def pre_download(urls, title, suffix, output_dir, merge):
+    assert urls
+    global output_filepath
+
+    for i, url in enumerate(urls):
+        filename = '%s_%02d.%s' % (title, i, suffix)
+        filepath = os.path.join(output_dir, filename)
+        parts.append(filepath)
+
+    output_filename = get_output_filename(urls, title, suffix, output_dir, merge)
+    output_filepath = os.path.join(output_dir, output_filename)
+
 def start_work(**kwargs):
     urls = general_m3u8_extractor(m3u8_url, headers)
+    item_urls = len(urls)
+    num_process = 10
+    process_list = []
+
     if debug:
         print_url(urls)
         print("\nslice number of all TS is %d.\n" %len(urls))
-    download_urls(urls, title, suffix, 0, output_dir = output_dir,
-                  merge = need_merge, **kwargs)
+
+    index_base = 0
+    pre_download(urls, title, suffix, output_dir, need_merge)
+    for slice_urls in chunks(urls, num_process):
+        new_p = Process(target = download_urls, args = (slice_urls, title,
+                        suffix, 0, parts, output_dir, None, need_merge,
+                        False, headers, index_base))
+        process_list.append(new_p)
+        index_base += num_process
+
+    for p in process_list:
+        p.start()
+    for p in process_list:
+        p.join()
+
+    # download_urls(slice_urls, title, suffix, 0, output_dir = output_dir,
+                  # merge = need_merge, parts = parts, base = index_base, **kwargs)
+    tackle_slice_of_ts(parts, output_filepath, suffix, need_merge)
 
 if __name__ == '__main__':
     start_work()

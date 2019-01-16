@@ -11,7 +11,7 @@ import logging
 import argparse
 from importlib import import_module
 from urllib import request, parse, error
-from multiprocessing import Process
+import threading
 
 remove_slice = False
 dry_run = False
@@ -22,19 +22,20 @@ extractor_proxy = None
 cookies = None
 output_filename = None
 auto_rename = False
+lock = threading.Lock()
 
 class PiecesProgressBar:
-    def __init__(self, total_size, total_pieces=1):
+    def __init__(self, total_pieces = 1, start = 0):
         self.displayed = False
-        self.total_size = total_size
         self.total_pieces = total_pieces
-        self.current_piece = 1
+        self.current_piece = start
         self.received = 0
+        self.max_index = start + total_pieces
 
     def update(self):
         self.displayed = True
         bar = '{0:>5}%[{1:<40}] {2}/{3}'.format(
-            '', '=' * 40, self.current_piece, self.total_pieces
+            '', '=' * 40, self.current_piece, self.max_index
         )
         sys.stdout.write('\r' + bar)
         sys.stdout.flush()
@@ -196,14 +197,14 @@ def url_save(url, filepath, bar, refer=None, is_part=False, faker=False,
                     if bar:
                         bar.done()
                     if not force and auto_rename:
-                        path, ext = os.path.basename(filepath).rsplit('.', 1)
+                        path, suffix = os.path.basename(filepath).rsplit('.', 1)
                         finder = re.compile(' \([1-9]\d*?\)$')
                         if (finder.search(path) is None):
-                            thisfile = path + ' (1).' + ext
+                            thisfile = path + ' (1).' + suffix
                         else:
                             def numreturn(a):
                                 return ' (' + str(int(a.group()[2:-1]) + 1) + ').'
-                            thisfile = finder.sub(numreturn, path) + ext
+                            thisfile = finder.sub(numreturn, path) + suffix
                         filepath = os.path.join(os.path.dirname(filepath), thisfile)
                         print('Changing name to %s' % tr(os.path.basename(filepath)), '...')
                         continue_renameing = True
@@ -310,86 +311,65 @@ def url_save(url, filepath, bar, refer=None, is_part=False, faker=False,
         os.remove(filepath)
     os.rename(temp_filepath, filepath)
 
-def get_output_filename(urls, title, ext, output_dir, merge):
+def get_output_filename(urls, title, suffix, output_dir, merge):
     # lame hack for the --output-filename option
     global output_filename
     if output_filename:
-        if ext:
-            return output_filename + '.' + ext
+        if suffix:
+            return output_filename + '.' + suffix
         return output_filename
 
-    merged_ext = ext
+    merged_suffix = suffix
     if (len(urls) > 1) and merge:
         from processor.ffmpeg import has_ffmpeg_installed
-        # only support ext: ts now
+        # only support suffix: ts now
         if has_ffmpeg_installed():
-            merged_ext = 'mp4'
-    return '%s.%s' % (title, merged_ext)
+            merged_suffix = 'mp4'
+    return '%s.%s' % (title, merged_suffix)
 
-def download_urls(urls, title, ext, total_size, output_dir='.', refer=None,
-                  merge=True, faker=False, headers={}, **kwargs):
+def download_urls(urls, title, suffix, total_size, parts, output_dir = '.',
+                  refer = None, merge = True, faker = False, headers = {},
+                  base = 0, **kwargs):
     assert urls
 
-    output_filename = get_output_filename(urls, title, ext, output_dir, merge)
-    output_filepath = os.path.join(output_dir, output_filename)
+    bar = PiecesProgressBar(len(urls), base)
+    slice_parts = []
 
-    bar = PiecesProgressBar(total_size, len(urls))
+    bar.update()
+    for i, url in enumerate(urls):
+        filename = '%s_%02d.%s' % (title, base + i, suffix)
+        filepath = os.path.join(output_dir, filename)
+        slice_parts.append(filepath)
+        bar.update_piece(base + i + 1)
 
-    num_process = 20
-    process_list = []
-    item_urls = len(urls)
-
-    if item_urls == 1:
-        url = urls[0]
-        print('Downloading %s ...' % tr(output_filename))
-        bar.update()
-        url_save(url, output_filepath, bar, refer=refer, faker=faker,
+        url_save(url, filepath, bar, refer=refer, is_part=True, faker=faker,
                  headers=headers, **kwargs)
-        bar.done()
-    else:
-        parts = []
-        print('Downloading %s.%s ...' % (title, ext))
-        bar.update()
-        for i, url in enumerate(urls):
-            filename = '%s_%02d.%s' % (title, i, ext)
-            filepath = os.path.join(output_dir, filename)
-            parts.append(filepath)
-            bar.update_piece(i + 1)
 
-            new_p = Process(target = url_save, args = (url, filepath, bar, refer, True, faker, headers, None))
-            process_list.append(new_p)
+    #  bar.done()
 
-            #  url_save(url, filepath, bar, refer=refer, is_part=True, faker=faker,
-                     #  headers=headers, **kwargs)
-        bar.done()
+def tackle_slice_of_ts(parts, output_filepath, suffix, merge):
+    if not merge:
+        print()
+        return
 
-        for p in process_list:
-            p.start()
-        for p in process_list:
-            p.join()
-
-        if not merge:
-            print()
-            return
-
-        # only support mpeg2-ts now
-        if ext == 'ts':
-            try:
-                from processor.ffmpeg import has_ffmpeg_installed
-                if has_ffmpeg_installed():
-                    from processor.ffmpeg import ffmpeg_concat_ts_to_mp4
-                    ffmpeg_concat_ts_to_mp4(parts, output_filepath)
-                else:
-                    from processor.join_ts import concat_ts
-                    concat_ts(parts, output_filepath)
-                print('\nMerged into %s' % output_filename)
-            except:
-                raise
+    # only support mpeg2-ts now
+    if suffix == 'ts':
+        try:
+            from processor.ffmpeg import has_ffmpeg_installed
+            if has_ffmpeg_installed():
+                from processor.ffmpeg import ffmpeg_concat_ts_to_mp4
+                ffmpeg_concat_ts_to_mp4(parts, output_filepath)
             else:
-                for part in parts:
-                    if remove_slice:
-                        os.remove(part)
+                from processor.join_ts import concat_ts
+                concat_ts(parts, output_filepath)
+            print('\nMerged into %s' %output_filepath)
+        except:
+            raise
         else:
-            print("Can't merge %s files" % ext)
+            for part in parts:
+                if remove_slice:
+                    os.remove(part)
+    else:
+        print("Can't merge %s files" % suffix)
 
     print()
