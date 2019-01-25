@@ -10,13 +10,10 @@ import json
 from common import *
 from multiprocessing import Process
 
-# need update
 title = "hello"
-output_dir = "./video"
+output_dir = "./downloads"
 suffix = "ts"
 need_merge = True
-#  m3u8_url = r"https://youku163.zuida-bofang.com/20181225/22948_a81f138c/800k/hls/index.m3u8"
-#  url = "http://www.lefuntv.us/index.php/vod/play/id/214/sid/1/nid/1.html"
 headers = {'user-agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36'}
 debug = False
 
@@ -27,18 +24,19 @@ def print_url(urls):
     for url in urls:
         print(url)
 
-def chunks(l, n_slice):
+""" split list
+@urls: the list to split
+@num_process: number of process want to use
+"""
+def chunks(urls, num_process):
     ret = []
-    tot_len = len(l)
-    loop = math.ceil(tot_len / n_slice)
-    residue = tot_len - loop * n_slice
-    for i in range(0, loop):
-        start = i * n_slice
-        end_pass = start + n_slice
-        if i + 1 == loop:
-            end_pass = tot_len
-        ret.append(l[start:end_pass])
-    return ret
+    tot_len = len(urls)
+    each = math.ceil(tot_len / num_process)
+    for loop in range(0, num_process):
+        start = loop * each
+        end_pass = start + each
+        ret.append(urls[start:end_pass])
+    return [each, ret]
 
 def pre_download(urls, title, suffix, output_dir, merge):
     assert urls
@@ -59,46 +57,51 @@ def start_work(**kwargs):
     page = get_content(url, headers)
     hit = re.findall(m3u8_patt, page)
     if hit is None:
-        print("Could not find first m3u8 url")
+        print("Could not extract first m3u8 url")
         return
     first_m3u8_url = hit[0]
+
+    # retrieve title
     hit = re.search(title_patt, page)
     if hit != None:
         global title
         title = hit.group(1)
-    logging.debug("haha")
     print(title)
 
     m3u8_url_list = real_m3u8_extractor(first_m3u8_url, headers)
     m3u8_url = m3u8_url_list[0]
     if m3u8_url is None:
-        print("Could not find first m3u8 url")
+        print("Could not extract real m3u8 url")
         return
     print(m3u8_url)
 
-    # get ts real urls from m3u8
+    # retrieve real TS url
     urls = general_m3u8_extractor(m3u8_url, headers)
     item_urls = len(urls)
-    num_process = 10
+    num_process = 50
     process_list = []
 
     if debug:
         print_url(urls)
-        print("\nslice number of all TS is %d.\n" %len(urls))
 
-    index_base = 0
+    print("\nUsed Number of Process: %d." %num_process)
+    print("Total Sliced Number of TS: %d.\n" %len(urls))
+
+    # index_base = 0
     pre_download(urls, title, suffix, output_dir, need_merge)
-    for slice_urls in chunks(urls, num_process):
-        new_p = Process(target = download_urls, args = (slice_urls, title,
-                        suffix, 0, parts, output_dir, None, need_merge,
-                        False, headers, index_base))
-        process_list.append(new_p)
-        index_base += num_process
+    # i = 0
+    # each, _urls = chunks(urls, num_process)
+    # for slice_urls in _urls:
+        # new_p = Process(target = download_urls, args = (slice_urls, title,
+                        # suffix, 0, parts, output_dir, need_merge, headers,
+                        # index_base))
+        # process_list.append(new_p)
+        # index_base += each
 
-    for p in process_list:
-        p.start()
-    for p in process_list:
-        p.join()
+    # for p in process_list:
+        # p.start()
+    # for p in process_list:
+        # p.join()
 
     # download_urls(slice_urls, title, suffix, 0, output_dir = output_dir,
                   # merge = need_merge, parts = parts, base = index_base, **kwargs)

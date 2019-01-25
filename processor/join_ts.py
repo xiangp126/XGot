@@ -1,11 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import struct
 from io import BytesIO
-
-##################################################
-# main
-##################################################
 
 def guess_output(inputs):
     import os.path
@@ -23,9 +19,9 @@ def concat_ts(ts_parts, output = None):
         output = guess_output(ts_parts)
     elif os.path.isdir(output):
         output = os.path.join(output, guess_output(ts_parts))
-    
-    print('Merging video parts...')
-    
+
+    print('\nStart to Merge Video Parts ...', flush = True)
+
     ts_out_file = open(output, "wb")
     for ts_in in ts_parts:
         ts_in_file = open(ts_in, "rb")
@@ -58,7 +54,7 @@ def main():
     if not args:
         usage()
         sys.exit(1)
-    
+
     concat_ts(args, output)
 
 if __name__ == '__main__':

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import logging
-import os.path
+import os
 import subprocess
 import sys
 
@@ -42,13 +42,14 @@ def has_ffmpeg_installed():
     return FFMPEG is not None
 
 def ffmpeg_concat_ts_to_mp4(files, output='output.mp4'):
-    print('\nMerging video parts... ', end="", flush=True)
-    params = [FFMPEG] + LOGLEVEL + ['-isync', '-y', '-i']
+    print('\nStart to Merge Video Parts ...', flush = True)
+    # params = [FFMPEG] + LOGLEVEL + ['-isync', '-y', '-i']
+    params = [FFMPEG] + ['-y', '-i']
     params.append('concat:')
     for file in files:
         if os.path.isfile(file):
             params[-1] += file + '|'
-    params += ['-f', 'matroska', '-c', 'copy', output]
+    params += ['-c', 'copy', output]
 
     try:
         if subprocess.call(params, stdin=STDIN) == 0:

@@ -11,7 +11,6 @@ import logging
 import argparse
 from importlib import import_module
 from urllib import request, parse, error
-import threading
 
 remove_slice = False
 dry_run = False
@@ -22,7 +21,9 @@ extractor_proxy = None
 cookies = None
 output_filename = None
 auto_rename = False
-lock = threading.Lock()
+timeout = 60
+# too many slice will err with too long list when subprocess.call
+ffmpeg_thresh = 2200
 
 class PiecesProgressBar:
     def __init__(self, total_pieces = 1, start = 0):
@@ -164,9 +165,7 @@ def real_m3u8_extractor(url, headers = {}):
 
 def url_size(url, faker=False, headers={}):
     if faker:
-        response = urlopen_with_retry(
-            request.Request(url, headers=fake_headers)
-        )
+        response = urlopen_with_retry(request.Request(url, headers=fake_headers))
     elif headers:
         response = urlopen_with_retry(request.Request(url, headers=headers))
     else:
@@ -175,18 +174,13 @@ def url_size(url, faker=False, headers={}):
     size = response.headers['content-length']
     return int(size) if size is not None else float('inf')
 
-def url_save(url, filepath, bar, refer=None, is_part=False, faker=False,
-             headers=None, timeout=None, **kwargs):
+def url_save(url, filepath, is_part=False, headers=None, timeout=None, **kwargs):
     tmp_headers = headers.copy() if headers is not None else {}
-    # When a referer specified with param refer,
-    # the key must be 'Referer' for the hack here
-    if refer is not None:
-        tmp_headers['Referer'] = refer
     if type(url) is list:
-        file_size = urls_size(url, faker=faker, headers=tmp_headers)
+        file_size = urls_size(url, headers = tmp_headers)
         is_chunked, urls = True, url
     else:
-        file_size = url_size(url, faker=faker, headers=tmp_headers)
+        file_size = url_size(url, headers = tmp_headers)
         is_chunked, urls = False, [url]
 
     continue_renameing = True
@@ -195,21 +189,11 @@ def url_save(url, filepath, bar, refer=None, is_part=False, faker=False,
         if os.path.exists(filepath):
             if not force and file_size == os.path.getsize(filepath):
                 if not is_part:
-                    if bar:
-                        bar.done()
-                    log.w(
-                        'Skipping {}: file already exists'.format(
-                            tr(os.path.basename(filepath))
-                        )
-                    )
-                else:
-                    if bar:
-                        bar.update_received(file_size)
+                    log.w('Skipping {}: file already exists'.format(
+                            tr(os.path.basename(filepath))))
                 return
             else:
                 if not is_part:
-                    if bar:
-                        bar.done()
                     if not force and auto_rename:
                         path, suffix = os.path.basename(filepath).rsplit('.', 1)
                         finder = re.compile(' \([1-9]\d*?\)$')
@@ -230,24 +214,18 @@ def url_save(url, filepath, bar, refer=None, is_part=False, faker=False,
         elif not os.path.exists(os.path.dirname(filepath)):
             os.mkdir(os.path.dirname(filepath))
 
-    temp_filepath = filepath + '.download' if file_size != float('inf') \
-        else filepath
+    temp_filepath = filepath + '.download' if file_size != float('inf') else filepath
     received = 0
     if not force:
         open_mode = 'ab'
-
         if os.path.exists(temp_filepath):
             received += os.path.getsize(temp_filepath)
-            if bar:
-                bar.update_received(os.path.getsize(temp_filepath))
     else:
         open_mode = 'wb'
 
     for url in urls:
         received_chunk = 0
         if received < file_size:
-            if faker:
-                tmp_headers = fake_headers
             '''
             if parameter headers passed in, we have it copied as tmp_header
             elif headers:
@@ -257,22 +235,14 @@ def url_save(url, filepath, bar, refer=None, is_part=False, faker=False,
             '''
             if received and not is_chunked:  # only request a range when not chunked
                 tmp_headers['Range'] = 'bytes=' + str(received) + '-'
-            if refer:
-                tmp_headers['Referer'] = refer
 
             if timeout:
-                response = urlopen_with_retry(
-                    request.Request(url, headers=tmp_headers), timeout=timeout
-                )
+                response = urlopen_with_retry(request.Request(url, headers = tmp_headers), timeout = timeout)
             else:
-                response = urlopen_with_retry(
-                    request.Request(url, headers=tmp_headers)
-                )
+                response = urlopen_with_retry(request.Request(url, headers = tmp_headers))
             try:
                 range_start = int(
-                    response.headers[
-                        'content-range'
-                    ][6:].split('/')[0].split('-')[0]
+                    response.headers['content-range'][6:].split('/')[0].split('-')[0]
                 )
                 end_length = int(
                     response.headers['content-range'][6:].split('/')[1]
@@ -287,8 +257,6 @@ def url_save(url, filepath, bar, refer=None, is_part=False, faker=False,
                 open_mode = 'ab'
             elif file_size != received + range_length:  # is it ever necessary?
                 received = 0
-                if bar:
-                    bar.received = 0
                 open_mode = 'wb'
 
             with open(temp_filepath, open_mode) as output:
@@ -313,8 +281,6 @@ def url_save(url, filepath, bar, refer=None, is_part=False, faker=False,
                     output.write(buffer)
                     received += len(buffer)
                     received_chunk += len(buffer)
-                    if bar:
-                        bar.update_received(len(buffer))
 
     assert received == os.path.getsize(temp_filepath), '%s == %s == %s' % (
         received, os.path.getsize(temp_filepath), temp_filepath
@@ -342,29 +308,21 @@ def get_output_filename(urls, title, suffix, output_dir, merge):
     return '%s.%s' % (title, merged_suffix)
 
 def download_urls(urls, title, suffix, total_size, parts, output_dir = '.',
-                  refer = None, merge = True, faker = False, headers = {},
-                  base = 0, **kwargs):
+                  merge = True, headers = {}, index_base = 0, **kwargs):
     assert urls
 
-    bar = PiecesProgressBar(len(urls), base)
-    slice_parts = []
-
-    bar.update()
     for i, url in enumerate(urls):
-        filename = '%s_%02d.%s' % (title, base + i, suffix)
+        filename = '%s_%02d.%s' % (title, index_base + i, suffix)
         filepath = os.path.join(output_dir, filename)
-        slice_parts.append(filepath)
-        bar.update_piece(base + i + 1)
 
-        url_save(url, filepath, bar, refer=refer, is_part=True, faker=faker,
-                 headers=headers, **kwargs)
-
-    #  bar.done()
+        url_save(url, filepath, is_part = True, headers = headers,
+                 timeout = timeout, **kwargs)
 
 def tackle_slice_of_ts(parts, output_filepath, suffix, merge):
     if not merge:
         print()
         return
+    num_of_ts = len(parts)
 
     # only support mpeg2-ts now
     if suffix == 'ts':
@@ -372,11 +330,23 @@ def tackle_slice_of_ts(parts, output_filepath, suffix, merge):
             from processor.ffmpeg import has_ffmpeg_installed
             if has_ffmpeg_installed():
                 from processor.ffmpeg import ffmpeg_concat_ts_to_mp4
-                ffmpeg_concat_ts_to_mp4(parts, output_filepath)
+                if num_of_ts <= ffmpeg_thresh:
+                    print("Call ffmpeg to Merge Video Parts\n")
+                    ret = ffmpeg_concat_ts_to_mp4(parts, output_filepath)
+                    if not ret:
+                        print("Oh, Failed to Merge Video Parts\n")
+                        return
+                else:
+                    from processor.join_ts import concat_ts
+                    print("Call OS Method to Merge Video Parts")
+                    concat_ts(parts, output_filepath)
+
+                    # call ffmpeg convert mpeg-ts to mp4
             else:
                 from processor.join_ts import concat_ts
                 concat_ts(parts, output_filepath)
-            print('\nMerged into %s' %output_filepath)
+
+            print('\nMerged Into %s' %output_filepath)
         except:
             raise
         else:
